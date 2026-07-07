@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fluxo de Caixa — Centranet H&amp;F</title>
+<style>
+  :root{
+    --bg:#0f172a; --panel:#111827; --panel2:#1a2236; --border:#26314a;
+    --text:#e5e9f0; --muted:#8b95ab; --green:#34d399; --red:#f87171;
+    --blue:#60a5fa; --amber:#fbbf24;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:var(--bg); color:var(--text); padding:24px;
+  }
+  h1{font-size:22px; margin:0 0 4px 0;}
+  .sub{color:var(--muted); font-size:13px; margin-bottom:20px;}
+  .status{display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); margin-bottom:20px;}
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--green);}
+  .cards{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; margin-bottom:22px;}
+  .card{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px;}
+  .card .label{font-size:12px; color:var(--muted); margin-bottom:6px;}
+  .card .value{font-size:24px; font-weight:600;}
+  .value.pos{color:var(--green);} .value.neg{color:var(--red);}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:20px;}
+  .panel h2{font-size:15px; margin:0 0 14px 0; color:var(--text);}
+  .filters{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  select{
+    background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    border-radius:8px; padding:6px 10px; font-size:13px; cursor:pointer;
+  }
+  table{width:100%; border-collapse:collapse; font-size:13px;}
+  th, td{text-align:right; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap;}
+  th:first-child, td:first-child{text-align:left; position:sticky; left:0; background:var(--panel);}
+  th{color:var(--muted); font-weight:500;}
+  tr:hover td{background:rgba(255,255,255,0.02);}
+  .table-wrap{overflow-x:auto; max-height:480px; overflow-y:auto;}
+  canvas{width:100%; height:260px;}
+  .accounts-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:10px;}
+  .acc{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:10px 12px;}
+  .acc .name{font-size:11px; color:var(--muted); margin-bottom:4px;}
+  .acc .val{font-size:15px; font-weight:600;}
+  .footer{color:var(--muted); font-size:11px; margin-top:20px; text-align:center;}
+  .error-box{background:#3a1a1a; border:1px solid #7f1d1d; color:#fca5a5; padding:14px; border-radius:10px; margin-bottom:20px; font-size:13px;}
+  a{color:var(--blue);}
+  .lock-note{background:#1a2236; border:1px solid #26314a; color:#8b95ab; padding:10px 14px; border-radius:10px; font-size:12px; margin-bottom:16px;}
+</style>
+</head>
+<body>
+  <h1>💵 Fluxo de Caixa — Centranet H&amp;F</h1>
+  <div class="sub" id="fonte">Carregando...</div>
+  <div class="status"><span class="dot"></span><span id="statusTxt"></span></div>
+  <div class="lock-note">🔒 Página publicada de forma criptografada (StatiCrypt). Atualizada automaticamente a cada 15 min via GitHub Actions — o Mac não precisa estar ligado.</div>
+
+  <div id="errorBox"></div>
+  <div class="cards" id="cards"></div>
+
+  <div class="panel">
+    <h2>Evolução do saldo total (dia a dia)</h2>
+    <canvas id="chart"></canvas>
+  </div>
+
+  <div class="panel">
+    <h2>Saldo por conta (data mais recente disponível)</h2>
+    <div class="accounts-grid" id="accountsGrid"></div>
+  </div>
+
+  <div class="panel">
+    <h2>Detalhe diário</h2>
+    <div class="filters">
+      <select id="mesSelect"></select>
+      <select id="contaSelect"><option value="">Todas as contas (total)</option></select>
+    </div>
+    <div class="table-wrap">
+      <table id="tabela">
+        <thead><tr id="tabela-thead"></tr></thead>
+        <tbody id="tabela-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="footer" id="rodape"></div>
+
+<script>
+<!-- DADOS_PLACEHOLDER -->
+let _filtros = { mes: "", conta: "" };
+
+function fmtBRL(v){
+  if (v === null || v === undefined) return "—";
+  return "R$ " + Number(v).toLocaleString("pt-BR", {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function renderCards(d){
+  const r = d.resumo;
+  const el = document.getElementById("cards");
+  const cls = (r.saldo_atual ?? 0) >= 0 ? "pos" : "neg";
+  const varCls = (r.variacao_mes ?? 0) >= 0 ? "pos" : "neg";
+  el.innerHTML = `
+    <div class="card">
+      <div class="label">Saldo total (${r.data_saldo_atual ? r.data_saldo_atual.split("-").reverse().join("/") : "—"})</div>
+      <div class="value ${cls}">${fmtBRL(r.saldo_atual)}</div>
+    </div>
+    <div class="card">
+      <div class="label">Variação no mês</div>
+      <div class="value ${varCls}">${r.variacao_mes === null ? "—" : fmtBRL(r.variacao_mes)}</div>
+    </div>
+    <div class="card">
+      <div class="label">Contas monitoradas</div>
+      <div class="value">${d.contas.length}</div>
+    </div>
+    <div class="card">
+      <div class="label">Meses carregados (desde ${d.min_mes_ano || "01/2026"})</div>
+      <div class="value">${d.meses.length}</div>
+    </div>
+  `;
+}
+
+function renderAccounts(d){
+  const el = document.getElementById("accountsGrid");
+  const contas = d.resumo.saldo_por_conta_atual || {};
+  const entries = Object.entries(contas);
+  if (!entries.length){ el.innerHTML = '<div class="sub">Sem dados de contas para a data mais recente.</div>'; return; }
+  el.innerHTML = entries.map(([nome, val]) => `
+    <div class="acc">
+      <div class="name">${nome}</div>
+      <div class="val" style="color:${val < 0 ? "var(--red)" : "var(--text)"}">${fmtBRL(val)}</div>
+    </div>
+  `).join("");
+}
+
+function renderChart(d){
+  const canvas = document.getElementById("chart");
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr; canvas.height = 260 * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = 260;
+  ctx.clearRect(0,0,W,H);
+
+  const serie = d.resumo.serie_diaria || [];
+  if (!serie.length){
+    ctx.fillStyle = "#8b95ab"; ctx.font = "13px sans-serif";
+    ctx.fillText("Sem dados suficientes para o gráfico.", 10, 20);
+    return;
+  }
+  const vals = serie.map(p => p.saldo_total ?? 0);
+  const min = Math.min(...vals, 0), max = Math.max(...vals, 0);
+  const pad = 30, top = 14, bottom = H - 26;
+  const xStep = (W - pad*2) / Math.max(serie.length - 1, 1);
+  const yScale = (v) => bottom - ((v - min) / ((max - min) || 1)) * (bottom - top);
+
+  ctx.strokeStyle = "#26314a"; ctx.beginPath();
+  ctx.moveTo(pad, yScale(0)); ctx.lineTo(W - pad, yScale(0)); ctx.stroke();
+
+  ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 2; ctx.beginPath();
+  serie.forEach((p, i) => {
+    const x = pad + i * xStep, y = yScale(p.saldo_total ?? 0);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  ctx.fillStyle = "#8b95ab"; ctx.font = "11px sans-serif";
+  [0, Math.floor(serie.length/2), serie.length-1].forEach(i => {
+    const p = serie[i]; if (!p) return;
+    const x = pad + i * xStep;
+    const label = p.data.split("-").reverse().slice(0,2).join("/");
+    ctx.fillText(label, Math.max(0, x - 15), H - 8);
+  });
+}
+
+function populateFilters(d){
+  const mesSel = document.getElementById("mesSelect");
+  const contaSel = document.getElementById("contaSelect");
+  mesSel.innerHTML = d.meses.map(m => `<option value="${m.mes}">${m.mes}</option>`).join("");
+  if (d.meses.length) mesSel.value = d.meses[d.meses.length-1].mes;
+  contaSel.innerHTML = '<option value="">Todas as contas (total)</option>' +
+    d.contas.map(c => `<option value="${c}">${c}</option>`).join("");
+  _filtros.mes = mesSel.value;
+  _filtros.conta = contaSel.value;
+}
+
+function renderTable(d){
+  const mes = d.meses.find(m => m.mes === _filtros.mes) || d.meses[d.meses.length-1];
+  const thead = document.getElementById("tabela-thead");
+  const tbody = document.getElementById("tabela-body");
+  if (!mes){ thead.innerHTML=""; tbody.innerHTML="<tr><td>Sem dados</td></tr>"; return; }
+
+  if (_filtros.conta){
+    thead.innerHTML = `<th>Data</th><th>${_filtros.conta}</th>`;
+    tbody.innerHTML = mes.dias.map(dia => `
+      <tr><td>${dia.data.split("-").reverse().join("/")}</td><td>${fmtBRL(dia.contas[_filtros.conta])}</td></tr>
+    `).join("");
+  } else {
+    thead.innerHTML = `<th>Data</th>` + d.contas.map(c => `<th>${c}</th>`).join("") + `<th>Saldo Total</th>`;
+    tbody.innerHTML = mes.dias.map(dia => `
+      <tr>
+        <td>${dia.data.split("-").reverse().join("/")}</td>
+        ${d.contas.map(c => `<td>${fmtBRL(dia.contas[c] ?? 0)}</td>`).join("")}
+        <td><b>${fmtBRL(dia.saldo_total)}</b></td>
+      </tr>
+    `).join("");
+  }
+}
+
+function render(d){
+  document.getElementById("errorBox").innerHTML = "";
+  document.getElementById("fonte").textContent =
+    (d.arquivo && d.arquivo.nome ? d.arquivo.nome : "arquivo") +
+    " — somente leitura, monitorado via SharePoint";
+  document.getElementById("statusTxt").textContent = "Publicado às " + d.updated;
+  document.getElementById("rodape").textContent =
+    "Dados a partir de " + (d.min_mes_ano || "01/2026") + " · Atualização automática a cada 15 min (GitHub Actions)";
+
+  renderCards(d);
+  renderAccounts(d);
+  renderChart(d);
+  populateFilters(d);
+  renderTable(d);
+}
+
+document.getElementById("mesSelect").addEventListener("change", (e) => {
+  _filtros.mes = e.target.value; renderTable(window.DADOS_EMBUTIDOS);
+});
+document.getElementById("contaSelect").addEventListener("change", (e) => {
+  _filtros.conta = e.target.value; renderTable(window.DADOS_EMBUTIDOS);
+});
+
+if (window.DADOS_EMBUTIDOS && window.DADOS_EMBUTIDOS.ok){
+  render(window.DADOS_EMBUTIDOS);
+} else {
+  document.getElementById("errorBox").innerHTML =
+    '<div class="error-box">⚠️ Não foi possível carregar os dados publicados.</div>';
+}
+
+// Recarrega a página a cada 5 min para pegar a versão mais recente publicada
+setTimeout(() => location.reload(), 5 * 60 * 1000);
+</script>
+</body>
+</html>

@@ -1,0 +1,79 @@
+name: Atualizar Fluxo de Caixa
+
+on:
+  schedule:
+    # A cada 15 minutos. O GitHub pode atrasar isso em picos de demanda —
+    # não é garantia de horário exato, só de que roda sozinho, sem o Mac ligado.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {}   # permite rodar manualmente pelo botão "Run workflow"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publicar-dashboard
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências Python
+        run: pip install --quiet openpyxl requests
+
+      - name: Buscar dados do SharePoint (Microsoft Graph)
+        env:
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_DRIVE_ID: ${{ secrets.MS_DRIVE_ID }}
+          MS_ITEM_ID: ${{ secrets.MS_ITEM_ID }}
+        run: python atualizar_dados.py
+
+      - name: Embutir dados no HTML
+        run: python build_html.py
+
+      - name: Configurar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Criptografar com StatiCrypt (AES-256)
+        env:
+          DASHBOARD_PASSWORD: ${{ secrets.DASHBOARD_PASSWORD }}
+        run: |
+          npx --yes staticrypt _build/index.html -d docs -p "$DASHBOARD_PASSWORD" \
+            --template-title "Fluxo de Caixa — Centranet H&F" \
+            --template-instructions "Acesso restrito — digite a senha" \
+            --template-button "Entrar" \
+            --short
+
+      - name: Checagem de segurança (não deixa dados em claro)
+        run: |
+          if [ ! -f docs/index.html ]; then
+            echo "❌ docs/index.html não foi gerado. Abortando."
+            exit 1
+          fi
+          if grep -q "DADOS_EMBUTIDOS" docs/index.html; then
+            echo "❌ Dados em claro encontrados no HTML final. Abortando publicação."
+            exit 1
+          fi
+
+      - name: Limpar arquivos temporários (não publicar dados em claro)
+        run: rm -f dados.json fluxo_caixa.xlsx && rm -rf _build
+
+      - name: Publicar (commit + push)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          git commit -m "Atualização automática — $(date -u '+%d/%m/%Y %H:%M UTC')" || echo "Sem mudanças para publicar."
+          git push
